@@ -5,10 +5,13 @@ import api from '@/lib/axios';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Categoria } from '@/types';
+// Importamos la lógica de Firebase que configuramos
+import { uploadImage } from '@/lib/storage-service'; 
 
 export default function CreateNewsPage() {
   const navigate = useRouter();
-  //[cite_start]// [cite: 45] Estado inicial
+  
+  // Estado inicial del formulario
   const [formData, setFormData] = useState({
     titulo: '',
     resumen: '',
@@ -23,7 +26,7 @@ export default function CreateNewsPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ text: '', type: '' });
 
-  //[cite_start]// [cite: 58] Cargar categorías
+  // Cargar categorías al montar el componente
   useEffect(() => {
     const fetchCategorias = async () => {
       try {
@@ -59,6 +62,7 @@ export default function CreateNewsPage() {
     setLoading(true);
     setMessage({ text: '', type: '' });
 
+    // Validación de categoría
     if (!formData.categoria) {
       setMessage({ text: 'Error: Espera a que carguen las categorías.', type: 'error' });
       setLoading(false);
@@ -68,38 +72,53 @@ export default function CreateNewsPage() {
     try {
       let imagenUrl = '';
 
-      //[cite_start]// [cite: 102] A) Subir imagen
+      // 1. SUBIDA A FIREBASE STORAGE
       if (file) {
-        const uploadData = new FormData();
-        uploadData.append('file', file);
-        // Nota: El header Content-Type para multipart suele ponerlo axios automáticamente al detectar FormData
-        // pero lo dejamos explícito en la config si es necesario.
-        const uploadRes = await api.post('/upload', uploadData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        });
-        imagenUrl = uploadRes.data.url;
+        setMessage({ text: 'Subiendo imagen a Firebase...', type: 'info' });
+        imagenUrl = await uploadImage(file); 
+        console.log("URL de Firebase obtenida:", imagenUrl);
       } else {
         alert("La imagen principal es obligatoria");
         setLoading(false);
         return;
       }
 
-      //[cite_start]// [cite: 116] B) Crear publicación
+      // 2. PREPARACIÓN DEL PAYLOAD (JSON)
       const payload = {
         ...formData,
-        imagen_principal_url: imagenUrl,
+        imagen_principal_url: imagenUrl, // Link de la nube
         imagenes_carousel: [],
         adjuntos: []
       };
 
-      await api.post('/publicaciones', payload);
+      // 3. ENVÍO AL BACKEND CON TOKEN DE AUTORIZACIÓN (Solución al 401)
+      // Recuperamos el token que guardaste en el login
+      const token = localStorage.getItem('token'); 
+
+      await api.post('/publicaciones', payload, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
       setMessage({ text: '¡Noticia publicada correctamente!', type: 'success' });
+      
+      // Redirección tras éxito
       setTimeout(() => navigate.push('/dashboard'), 2000);
 
     } catch (error: any) {
-      console.error(error);
-      const errorTexto = error.response?.data?.mensaje || 'Error al crear la publicación.';
-      setMessage({ text: errorTexto, type: 'error' });
+      console.error("Error en el proceso:", error);
+      
+      // Manejo específico del error 401
+      if (error.response?.status === 401) {
+        setMessage({ 
+          text: 'Sesión no válida. Por favor, vuelve a iniciar sesión.', 
+          type: 'error' 
+        });
+      } else {
+        const errorTexto = error.response?.data?.mensaje || 'Error al crear la publicación.';
+        setMessage({ text: errorTexto, type: 'error' });
+      }
     } finally {
       setLoading(false);
     }
@@ -116,9 +135,12 @@ export default function CreateNewsPage() {
           </Link>
         </div>
 
-        {/* Alertas */}
+        {/* Alertas dinámicas */}
         {message.text && (
-          <div className={`mb-4 p-3 rounded ${message.type === 'error' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+          <div className={`mb-4 p-3 rounded ${
+            message.type === 'error' ? 'bg-red-100 text-red-700' : 
+            message.type === 'info' ? 'bg-blue-100 text-blue-700' : 
+            'bg-green-100 text-green-700'}`}>
             {message.text}
           </div>
         )}
@@ -138,7 +160,7 @@ export default function CreateNewsPage() {
             />
           </div>
 
-          {/* Fila Doble */}
+          {/* Fila Doble: Tipo y Categoría */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
@@ -170,7 +192,7 @@ export default function CreateNewsPage() {
             </div>
           </div>
 
-          {/* Imagen */}
+          {/* Imagen de Portada */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Imagen de Portada</label>
             <input
@@ -180,7 +202,7 @@ export default function CreateNewsPage() {
               required
               className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-red-50 file:text-red-700 hover:file:bg-red-100"
             />
-            <small className="text-gray-400 mt-1 block">Formatos: JPG, PNG. Máx 10MB.</small>
+            <small className="text-gray-400 mt-1 block">La imagen se guardará en Google Cloud Storage.</small>
           </div>
 
           {/* Resumen */}
@@ -197,7 +219,7 @@ export default function CreateNewsPage() {
             />
           </div>
 
-          {/* Contenido */}
+          {/* Contenido Completo */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Contenido Completo</label>
             <textarea
@@ -226,13 +248,15 @@ export default function CreateNewsPage() {
             </label>
           </div>
 
-          {/* Botón */}
+          {/* Botón de envío */}
           <button
             type="submit"
             disabled={loading}
-            className={`w-full py-3 px-4 rounded text-white font-bold shadow ${loading ? 'bg-gray-400' : 'bg-red-600 hover:bg-red-700'}`}
+            className={`w-full py-3 px-4 rounded text-white font-bold shadow transition-colors ${
+              loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'
+            }`}
           >
-            {loading ? 'Subiendo y Publicando...' : 'Publicar Ahora'}
+            {loading ? 'Procesando con Firebase...' : 'Publicar Ahora'}
           </button>
         </form>
       </div>

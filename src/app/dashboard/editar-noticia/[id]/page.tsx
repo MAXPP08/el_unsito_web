@@ -5,12 +5,15 @@ import api from '@/lib/axios';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { Categoria } from '@/types';
+// 1. IMPORTAMOS LA FUNCIÓN DE FIREBASE
+import { uploadImage } from '@/lib/storage-service'; 
 
 export default function EditNewsPage() {
-  const { id } = useParams(); // Obtener ID de la URL
+  const { id } = useParams(); 
   const router = useRouter();
   
   const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState(false); // Estado para el botón de guardado
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [formData, setFormData] = useState({
     titulo: '',
@@ -23,7 +26,6 @@ export default function EditNewsPage() {
   });
   const [newFile, setNewFile] = useState<File | null>(null);
 
-  //[cite_start]// [cite: 414] Cargar datos
   useEffect(() => {
     const getData = async () => {
       try {
@@ -39,7 +41,6 @@ export default function EditNewsPage() {
             resumen: pub.resumen,
             contenido_completo: pub.contenido_completo,
             tipo: pub.tipo,
-            // Si viene poblado es objeto, si no es string
             categoria: pub.categoria?._id || pub.categoria || '',
             es_destacado: pub.es_destacado,
             imagen_principal_url: pub.imagen_principal_url
@@ -57,30 +58,40 @@ export default function EditNewsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setUpdating(true); // Iniciamos carga
+
     try {
       let finalImageUrl = formData.imagen_principal_url;
 
-      //[cite_start]// [cite: 444] Si hay nueva imagen, subirla
+      // 2. SI HAY NUEVA IMAGEN, SUBIRLA A FIREBASE
       if (newFile) {
-        const uploadData = new FormData();
-        uploadData.append('file', newFile);
-        const upRes = await api.post('/upload', uploadData, {
-           headers: { 'Content-Type': 'multipart/form-data' }
-        });
-        finalImageUrl = upRes.data.url;
+        console.log("Subiendo nueva imagen a Firebase...");
+        finalImageUrl = await uploadImage(newFile);
       }
 
-      //[cite_start]// [cite: 457] Actualizar (PUT)
+      // 3. RECUPERAR TOKEN PARA EVITAR 401
+      const token = localStorage.getItem('token');
+
+      // ACTUALIZAR (PUT) ENVIANDO JSON
       await api.put(`/publicaciones/${id}`, {
         ...formData,
         imagen_principal_url: finalImageUrl
+      }, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
       });
 
       alert("¡Actualizado correctamente!");
       router.push('/dashboard');
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      alert("Error al actualizar");
+      const msg = error.response?.status === 401 
+        ? "Sesión expirada. Reeloguea." 
+        : "Error al actualizar";
+      alert(msg);
+    } finally {
+      setUpdating(false);
     }
   };
 
@@ -94,11 +105,9 @@ export default function EditNewsPage() {
     if (e.target.files) setNewFile(e.target.files[0]);
   };
 
-  //[cite_start]// Helper para mostrar imagen actual (Lógica adaptada de tu código original [cite: 490])
   const getImageUrl = (url: string) => {
     if (!url) return '';
-    if (url.startsWith('http')) return url;
-    // Limpieza simple de path si viene local
+    if (url.startsWith('http')) return url; // Esto cargará perfecto las de Firebase
     const filename = url.replace(/\\/g, '/').split('/').pop();
     return `http://localhost:3000/uploads/${filename}`;
   };
@@ -116,7 +125,7 @@ export default function EditNewsPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          [cite_start]{/* Previsualización Imagen [cite: 484] */}
+          {/* Previsualización */}
           {formData.imagen_principal_url && !newFile && (
              <div className="text-center bg-gray-100 p-4 rounded-lg">
                <p className="text-gray-500 mb-2 text-sm font-semibold">Imagen actual:</p>
@@ -170,6 +179,7 @@ export default function EditNewsPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Cambiar Imagen (Opcional)</label>
             <input type="file" onChange={handleFileChange} className="w-full text-sm text-gray-500" />
+            <p className="text-xs text-blue-600 mt-1">Si seleccionas una foto, se reemplazará en Firebase.</p>
           </div>
 
           <div>
@@ -206,8 +216,14 @@ export default function EditNewsPage() {
             <label htmlFor="edit_destacado" className="ml-2 text-sm text-gray-900">Destacar noticia en portada</label>
           </div>
 
-          <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded hover:bg-blue-700 transition">
-            Guardar Cambios
+          <button 
+            type="submit" 
+            disabled={updating}
+            className={`w-full font-bold py-3 rounded transition ${
+              updating ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700 text-white'
+            }`}
+          >
+            {updating ? 'Guardando en la nube...' : 'Guardar Cambios'}
           </button>
         </form>
       </div>
